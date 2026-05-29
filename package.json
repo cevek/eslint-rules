@@ -1,0 +1,39 @@
+{
+    "name": "@cevek/eslint-plugin",
+    "version": "1.0.2",
+    "description": "Custom ESLint rules",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "files": [
+        "dist"
+    ],
+    "keywords": [
+        "eslint",
+        "eslintplugin",
+        "eslint-plugin"
+    ],
+    "author": "cevek <x.cevek@gmail.com>",
+    "license": "MIT",
+    "engines": {
+        "node": "^20.19.0 || ^22.13.0 || >=24"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
+    "scripts": {
+        "build": "tsc",
+        "clean": "rm -rf dist",
+        "prepare": "npm run build"
+    },
+    "peerDependencies": {
+        "eslint": ">=10"
+    },
+    "dependencies": {
+        "@typescript-eslint/utils": "^8.60.0"
+    },
+    "devDependencies": {
+        "@types/node": "^22.0.0",
+        "eslint": "^10.0.0",
+        "typescript": "^6.0.0"
+    }
+}
