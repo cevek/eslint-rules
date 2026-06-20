@@ -4,6 +4,7 @@ import lucideIconSizeProp from "./rules/lucide-icon-size-prop";
 import noHandrolledForm from "./rules/no-handrolled-form";
 import noStaticInlineStyle from "./rules/no-static-inline-style";
 import noTemplateLiteralClassname from "./rules/no-template-literal-classname";
+import requireStory from "./rules/require-story";
 
 export const rules = {
     "component-file-structure": componentFileStructure,
@@ -12,6 +13,7 @@ export const rules = {
     "no-handrolled-form": noHandrolledForm,
     "no-static-inline-style": noStaticInlineStyle,
     "no-template-literal-classname": noTemplateLiteralClassname,
+    "require-story": requireStory,
 };
 
 export default { rules };
