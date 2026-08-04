@@ -16,5 +16,8 @@
         "types": ["node"]
     },
     "include": ["src/**/*"],
-    "exclude": ["dist", "node_modules"]
+    // Tests are dev-only: RuleTester needs no build output, and shipping the
+    // compiled copies would make vitest run each suite twice.
+
+    "exclude": ["dist", "node_modules", "src/**/*.test.ts", "vitest.config.ts"]
 }

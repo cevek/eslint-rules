@@ -23,7 +23,8 @@
     "scripts": {
         "build": "tsc",
         "clean": "rm -rf dist",
-        "prepare": "npm run build"
+        "prepare": "npm run build",
+        "test": "vitest run"
     },
     "peerDependencies": {
         "eslint": ">=10"
@@ -33,7 +34,10 @@
     },
     "devDependencies": {
         "@types/node": "^22.0.0",
+        "@typescript-eslint/parser": "^8.66.0",
+        "@typescript-eslint/rule-tester": "^8.66.0",
         "eslint": "^10.0.0",
-        "typescript": "^6.0.0"
+        "typescript": "^6.0.0",
+        "vitest": "^4.1.10"
     }
 }
