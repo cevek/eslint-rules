@@ -93,6 +93,44 @@ ruleTester.run("no-silent-submit-bail", rule, {
                 }
             `,
         },
+        // A `switch` case that saved and then returned. Flagging this would tell the
+        // author to throw over a commit that happened — the rule manufacturing its
+        // own defect, which is why false positives here cost more than misses.
+        {
+            code: `
+                function Body() {
+                    return useAppForm({
+                        onSubmit: async ({value}) => {
+                            switch (value.kind) {
+                                case 'a':
+                                    await saveA(value);
+                                    return;
+                                default:
+                                    await saveB(value);
+                                    return;
+                            }
+                        },
+                    });
+                }
+            `,
+        },
+        // Same, in a `try` whose `finally` only cleans up.
+        {
+            code: `
+                function Body() {
+                    return useAppForm({
+                        onSubmit: async ({value}) => {
+                            try {
+                                await save(value);
+                                return;
+                            } finally {
+                                cleanup();
+                            }
+                        },
+                    });
+                }
+            `,
+        },
         // `wrap: false as const` is the same opt-out with a type assertion on it.
         {
             code: `
@@ -187,6 +225,99 @@ ruleTester.run("no-silent-submit-bail", rule, {
                         onSubmit: async ({value}) => {
                             if (!value.a) return null;
                             if (!value.b) return void 0;
+                            await save(value);
+                        },
+                    });
+                }
+            `,
+            errors: [{ messageId: "silentBail" }, { messageId: "silentBail" }],
+        },
+        // The canonical bail written with an `else`. The save sits in the other
+        // branch, so the return abandons it — "syntactically last" is not "skips no
+        // work", and reading it as such let this through until it was caught in
+        // re-review. All three shapes below are the same defect.
+        {
+            code: `
+                function Body() {
+                    return useAppForm({
+                        onSubmit: async ({value}) => {
+                            if (!value.method) {
+                                return;
+                            } else {
+                                await save(value);
+                            }
+                        },
+                    });
+                }
+            `,
+            errors: [{ messageId: "silentBail" }],
+        },
+        {
+            code: `
+                function Body() {
+                    return useAppForm({
+                        onSubmit: async ({value}) => {
+                            if (!value.a) return;
+                            else await save(value);
+                        },
+                    });
+                }
+            `,
+            errors: [{ messageId: "silentBail" }],
+        },
+        {
+            code: `
+                function Body() {
+                    return useAppForm({
+                        onSubmit: async ({value}) => {
+                            const draft = build(value);
+                            if (draft.mode === 'new') await create(draft);
+                            else if (draft.id) await update(draft);
+                            else return;
+                        },
+                    });
+                }
+            `,
+            errors: [{ messageId: "silentBail" }],
+        },
+        // A visible bail on one branch of a ternary / short-circuit. Reading only the
+        // whole expression would contradict the rule's own criterion.
+        {
+            code: `
+                function Body() {
+                    return useAppForm({
+                        onSubmit: async ({value}) => {
+                            if (value.x) return value.ok ? save(value) : null;
+                            await save(value);
+                        },
+                    });
+                }
+            `,
+            errors: [{ messageId: "silentBail" }],
+        },
+        // The handler as a hoisted `function` declaration — the other half of the
+        // named-handler resolution, which had no test until re-review found the
+        // mutant surviving.
+        {
+            code: `
+                function Body() {
+                    function handleSubmit({value}) {
+                        if (!value.id) return;
+                        return save(value);
+                    }
+                    return useAppForm({onSubmit: handleSubmit});
+                }
+            `,
+            errors: [{ messageId: "silentBail" }],
+        },
+        // `satisfies` / `!` around the bail value must not hide it.
+        {
+            code: `
+                function Body() {
+                    return useAppForm({
+                        onSubmit: async ({value}) => {
+                            if (!value.a) return null satisfies unknown;
+                            if (!value.b) return [];
                             await save(value);
                         },
                     });

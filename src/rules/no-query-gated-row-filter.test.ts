@@ -102,6 +102,16 @@ ruleTester.run("no-query-gated-row-filter", rule, {
                     }
                 `,
             },
+            // An identifier in TYPE position is not a value being consulted.
+            {
+                code: `
+                    function useData() {
+                        const {data: page} = useAppointments({});
+                        const seen = new Set<typeof page>();
+                        return rows.filter((r) => seen.has(r));
+                    }
+                `,
+            },
             // Resolving a NAME for a cell already on screen — CLAUDE.md's written
             // exception (i). `.find` on a second query is a placeholder while it
             // loads, not a gate over which rows exist. Seven of these live in the
@@ -157,6 +167,48 @@ ruleTester.run("no-query-gated-row-filter", rule, {
                 }
             `,
             errors: [{ messageId: "queryGatedFilter", data: { binding: "taken", hook: "useSearchSalesByAppointment" } }],
+        },
+        // The predicate as a hoisted `function` declaration — the other half of the
+        // named-predicate resolution, which had no test until re-review found the
+        // mutant surviving.
+        {
+            code: `
+                function useRows() {
+                    const {data: rowsPage} = useRows({});
+                    const {data: blockedPage} = useBlocked({});
+                    function isVisible(r) {
+                        return !(blockedPage?.content ?? []).includes(r.id);
+                    }
+                    return (rowsPage?.content ?? []).filter(isVisible);
+                }
+            `,
+            errors: [{ messageId: "queryGatedFilter" }],
+        },
+        // The emptiness fallback moved into the destructuring. Same defect, shorter
+        // spelling — `= {content: []}` is exactly the "not loaded reads as empty"
+        // this rule is about.
+        {
+            code: `
+                function useRows() {
+                    const {data: rowsPage} = useRows({});
+                    const {data: blocked = {content: []}} = useBlocked({});
+                    return (rowsPage?.content ?? []).filter((r) => !blocked.content.includes(r.id));
+                }
+            `,
+            errors: [{ messageId: "queryGatedFilter" }],
+        },
+        // An array literal that is NOT a dependency list carries the query like any
+        // other expression. The exemption was first drawn at "any array in argument
+        // position", which silenced this while `new Set([x])` still fired.
+        {
+            code: `
+                function useRows() {
+                    const {data: rowsPage} = useRows({});
+                    const {data: blockedPage} = useBlocked({});
+                    return (rowsPage?.content ?? []).filter((r) => !contains([blockedPage], r.id));
+                }
+            `,
+            errors: [{ messageId: "queryGatedFilter" }],
         },
         // No `useMemo` hop, no Set — the bare version of the same defect, so the
         // rule is not pinned to one file's spelling.

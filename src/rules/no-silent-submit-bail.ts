@@ -46,9 +46,19 @@ import { createRule } from "../create-rule";
  *     options object carrying a spread is not read at all — `wrap` may be inside
  *     it, and guessing would flag an opted-out form.
  *
- * A submit handler that lives in another module, or one wrapped in `useCallback`,
- * is out of reach, and this rule does not chase it — stated so the gap is known
- * rather than assumed away.
+ * WHAT THIS RULE DOES NOT SEE — listed so a green run is not read as an absence
+ * of the defect:
+ *   - a handler in another module, or wrapped (`onSubmit: useCallback(fn, [])`);
+ *   - a bail behind a name: `const result = null; … return result;`, because a
+ *     bare identifier may equally be the promise the wrapper awaits;
+ *   - a call that plainly is not work — `return noop()`, `return
+ *     Promise.resolve()` — for the same reason;
+ *   - a branch that simply does nothing, with no `return` at all: the rule reads
+ *     returns, so `if (!x) { } else { await save(v); }` is invisible to it.
+ * These misses are the chosen direction, not oversights. The asymmetry is what
+ * decides: a missed bail leaves a gap in the guard, while a false one tells the
+ * author to `throw ABORT_SUBMIT` over a save that already committed — which
+ * manufactures the very defect the rule exists to prevent.
  */
 
 /** `false as const` / `(false)` / `false satisfies boolean` — the value underneath. */
@@ -80,6 +90,16 @@ function isSilentBail(node: TSESTree.ReturnStatement): boolean {
             return argument.name === "undefined";
         case AST_NODE_TYPES.UnaryExpression:
             return argument.operator === "void";
+        // `ok ? save(v) : null` and `ok && save(v)` put a visible bail on one
+        // branch. Reading only the whole expression would let the rule contradict
+        // its own criterion — the literal IS right there.
+        case AST_NODE_TYPES.ConditionalExpression:
+            return (
+                isSilentBail({ ...node, argument: argument.consequent }) ||
+                isSilentBail({ ...node, argument: argument.alternate })
+            );
+        case AST_NODE_TYPES.LogicalExpression:
+            return isSilentBail({ ...node, argument: argument.right });
         default:
             // A call, an await, a member read, a bare identifier: this may be the
             // promise the wrapper awaits. Not guessed at.
@@ -97,8 +117,15 @@ function isFunctionNode(node: TSESTree.Node): boolean {
 
 /**
  * Every statement that ends the function: the last of the body, and — walking
- * down — the last of a trailing block, both branches of a trailing `if`, and the
- * tails of a trailing `try`. A return among them skips nothing.
+ * down — the last of a trailing block, EITHER branch of a trailing `if`, the
+ * tail of every case of a trailing `switch`, and the tails of a trailing `try`.
+ *
+ * Being last is necessary but NOT sufficient, which is the correction this
+ * function used to be missing. `if (!x) { return; } else { await save(v); }`
+ * puts a return in tail position that abandons the save — "syntactically last"
+ * is not "skips no work", and using one as a proxy for the other let the
+ * canonical bail through as soon as it was written with an `else`. The second
+ * half of the test is in `endsCommittedWork`.
  */
 function collectTailStatements(body: TSESTree.BlockStatement, into: Set<TSESTree.Node>): void {
     const visitTail = (statement: TSESTree.Statement | null | undefined): void => {
@@ -109,12 +136,42 @@ function collectTailStatements(body: TSESTree.BlockStatement, into: Set<TSESTree
         } else if (statement.type === AST_NODE_TYPES.IfStatement) {
             visitTail(statement.consequent);
             visitTail(statement.alternate);
+        } else if (statement.type === AST_NODE_TYPES.SwitchStatement) {
+            for (const branch of statement.cases) visitTail(branch.consequent[branch.consequent.length - 1]);
         } else if (statement.type === AST_NODE_TYPES.TryStatement) {
-            visitTail(statement.finalizer ?? statement.block);
+            // Any of the three can be where control leaves the function.
+            visitTail(statement.block);
             visitTail(statement.handler?.body);
+            visitTail(statement.finalizer);
         }
     };
     visitTail(body.body[body.body.length - 1]);
+}
+
+/**
+ * Is there a statement BEFORE this return in its own block? That is the cheap
+ * stand-in for "the work already ran": a branch whose entire content is
+ * `return` does nothing and is the bail this rule is about, while a return
+ * after a save is dead weight that must not be flagged — prescribing
+ * `throw ABORT_SUBMIT` there would undo a commit that happened.
+ *
+ * It is a stand-in, not a proof: `{ setError(…); return; }` reads as
+ * committed work and is missed. That direction is chosen deliberately. A
+ * missed bail is a silent gap in the guard; a false one tells the author to
+ * throw over saved work, which manufactures the very defect the rule exists to
+ * prevent. Deciding this properly needs a control-flow graph, which is more
+ * machinery than a lint rule should carry.
+ */
+function endsCommittedWork(node: TSESTree.ReturnStatement): boolean {
+    const parent = node.parent;
+    const siblings =
+        parent?.type === AST_NODE_TYPES.BlockStatement
+            ? parent.body
+            : parent?.type === AST_NODE_TYPES.SwitchCase
+              ? parent.consequent
+              : null;
+    if (!siblings) return false; // `if (!x) return;` — the return IS the branch
+    return siblings.indexOf(node) > 0;
 }
 
 export default createRule<[{ formHook: string; commitCallbacks: string[]; commitCallbackHook: string }], "silentBail">({
@@ -146,8 +203,23 @@ export default createRule<[{ formHook: string; commitCallbacks: string[]; commit
     ],
     create(context, [options]) {
         const { formHook, commitCallbacks, commitCallbackHook } = options;
-        const sourceText = context.sourceCode.getText();
-        const commitCallbacksInScope = sourceText.includes(commitCallbackHook);
+
+        /** Does this `commitAndClose` come from `useCommitAndClose()`, or just share the name? */
+        function isCommitBinding(callee: TSESTree.Identifier): boolean {
+            const scope = context.sourceCode.getScope(callee);
+            for (let current: typeof scope | null = scope; current; current = current.upper) {
+                const variable = current.variables.find((candidate) => candidate.name === callee.name);
+                if (!variable) continue;
+                return variable.defs.some(
+                    (definition) =>
+                        definition.node.type === AST_NODE_TYPES.VariableDeclarator &&
+                        definition.node.init?.type === AST_NODE_TYPES.CallExpression &&
+                        definition.node.init.callee.type === AST_NODE_TYPES.Identifier &&
+                        definition.node.init.callee.name === commitCallbackHook,
+                );
+            }
+            return false;
+        }
 
         function reportBails(fn: TSESTree.Node): void {
             if (!isFunctionNode(fn)) return;
@@ -159,7 +231,7 @@ export default createRule<[{ formHook: string; commitCallbacks: string[]; commit
             const visit = (node: TSESTree.Node): void => {
                 if (node !== fn && isFunctionNode(node)) return; // a nested callback's return is its own
                 if (node.type === AST_NODE_TYPES.ReturnStatement) {
-                    if (isSilentBail(node) && !tails.has(node)) {
+                    if (isSilentBail(node) && !(tails.has(node) && endsCommittedWork(node))) {
                         context.report({ node, messageId: "silentBail" });
                     }
                     return;
@@ -213,7 +285,7 @@ export default createRule<[{ formHook: string; commitCallbacks: string[]; commit
 
                 // `commitAndClose(cb)` — clears the guard and closes when `cb` resolves.
                 if (commitCallbacks.includes(node.callee.name)) {
-                    if (commitCallbacksInScope && node.arguments[0]) reportHandler(node.arguments[0]);
+                    if (node.arguments[0] && isCommitBinding(node.callee)) reportHandler(node.arguments[0]);
                     return;
                 }
 

@@ -43,10 +43,20 @@ import { createRule } from "../create-rule";
  * `const {data: x} = useThing(...)`, and by name: `useSuspense*` is safe, every
  * other `use*` is not. That is the house convention (every hook file exports
  * both `useX` and `useSuspenseX`), and it means the rule needs no type
- * information — but it also means a query reached some other way (`const q =
- * useX(); q.data`), renamed, given a destructuring default, or handed across a
- * file boundary, is not seen. The check does not guess at those; it simply does
- * not fire.
+ * information.
+ *
+ * WHAT THIS RULE DOES NOT SEE — verified by construction, listed so a green run
+ * is not read as an absence of the defect:
+ *   - a query reached some other way: `const q = useX(); q.data`, or renamed;
+ *   - a query, or a predicate, crossing a file boundary (imported predicate:
+ *     silent miss, no crash);
+ *   - a predicate that is a method (`obj.check`), a bound method
+ *     (`.filter(taken.has, taken)`), the result of a call (`makePredicate(t)`),
+ *     or a `let` reassigned after declaration;
+ *   - taint carried by assignment rather than initialisation
+ *     (`let taken; if (page) taken = …`);
+ *   - composition built with `for…of` + `push` instead of `.filter`.
+ * The check does not guess at any of these; it simply does not fire.
  *
  * The legal escape is a deliberate SUPERSET — showing more rows than strictly
  * apply, where showing extra is harmless and the submit is gated separately.
@@ -75,6 +85,26 @@ const TYPE_NODES = new Set<string>([
     AST_NODE_TYPES.TSTypeReference,
     AST_NODE_TYPES.TSTypeQuery,
 ]);
+
+/** Hooks whose SECOND argument is a dependency list, not data flowing anywhere. */
+const DEPENDENCY_LIST_HOOKS = new Set(["useMemo", "useCallback", "useEffect", "useLayoutEffect"]);
+
+/**
+ * The `[a, b]` of `useMemo(fn, [a, b])` — a mention, not a flow.
+ *
+ * Scoped to those hooks by name rather than to "any array literal in argument
+ * position", which is where this was first drawn and is much too wide: it
+ * silenced `contains([blockedPage], id)` while `new Set([blockedPage])` still
+ * fired, i.e. the line fell on the parent's node type instead of on what a
+ * dependency list is.
+ */
+function isDependencyList(node: TSESTree.Node): boolean {
+    if (node.type !== AST_NODE_TYPES.ArrayExpression) return false;
+    const parent = node.parent;
+    if (parent?.type !== AST_NODE_TYPES.CallExpression) return false;
+    if (parent.callee.type !== AST_NODE_TYPES.Identifier) return false;
+    return DEPENDENCY_LIST_HOOKS.has(parent.callee.name) && parent.arguments[1] === node;
+}
 
 /** `const {data: x} = useThing()` — the react-query shape, minus the suspense ones. */
 function nonSuspenseQuerySource(declarator: TSESTree.VariableDeclarator): TSESTree.CallExpression | null {
@@ -158,13 +188,20 @@ export default createRule<[], "queryGatedFilter">({
                     for (const prop of declarator.id.properties) {
                         if (prop.type !== AST_NODE_TYPES.Property) continue;
                         if (prop.key.type !== AST_NODE_TYPES.Identifier || prop.key.name !== "data") continue;
-                        // A destructuring default (`{data: x = fallback}`) is an
-                        // AssignmentPattern, not an Identifier — deliberately not a
-                        // source, since the fallback is exactly what would have to be
-                        // reasoned about.
-                        if (prop.value.type !== AST_NODE_TYPES.Identifier) continue;
+                        // `{data: x}` and `{data: x = {content: []}}` alike. The
+                        // default was first left out as unreasonable-about; it is in
+                        // fact the defect written shorter — an emptiness fallback for
+                        // the un-loaded state, moved into the destructuring.
+                        const bound =
+                            prop.value.type === AST_NODE_TYPES.Identifier
+                                ? prop.value
+                                : prop.value.type === AST_NODE_TYPES.AssignmentPattern &&
+                                    prop.value.left.type === AST_NODE_TYPES.Identifier
+                                  ? prop.value.left
+                                  : null;
+                        if (!bound) continue;
                         for (const variable of scopeManager.getDeclaredVariables(declarator)) {
-                            if (variable.name === prop.value.name) source.set(variable, call);
+                            if (variable.name === bound.name) source.set(variable, call);
                         }
                     }
                 }
@@ -192,32 +229,14 @@ export default createRule<[], "queryGatedFilter">({
                     walk(node, (current) => {
                         if (hit) return false;
                         if (TYPE_NODES.has(current.type)) return false;
-                        if (
-                            current.type === AST_NODE_TYPES.ArrayExpression &&
-                            current.parent?.type === AST_NODE_TYPES.CallExpression &&
-                            current.parent.arguments.includes(current as TSESTree.CallExpressionArgument)
-                        ) {
-                            return false;
-                        }
+                        if (isDependencyList(current)) return false;
                         if (current.type === AST_NODE_TYPES.Identifier) {
                             take(current);
                             return false;
                         }
-                        // `x.data` reads a property NAME, not a binding called `data` —
-                        // descend into the object only.
-                        if (
-                            current.type === AST_NODE_TYPES.MemberExpression &&
-                            !current.computed &&
-                            current.property.type === AST_NODE_TYPES.Identifier
-                        ) {
-                            walk(current.object, (inner) => {
-                                if (hit) return false;
-                                if (inner.type !== AST_NODE_TYPES.Identifier) return undefined;
-                                take(inner);
-                                return false;
-                            });
-                            return false;
-                        }
+                        // No special case for `x.data`: `resolvedOf` is keyed by node
+                        // identity from the scope manager, and a property NAME is never
+                        // a scope reference, so it can never resolve to a binding.
                         return undefined;
                     });
                     return hit;
