@@ -3,6 +3,7 @@ import componentScssModule from "./rules/component-scss-module";
 import lucideIconSizeProp from "./rules/lucide-icon-size-prop";
 import noHandrolledForm from "./rules/no-handrolled-form";
 import noRequiredPropWithSchema from "./rules/no-required-prop-with-schema";
+import requireFormSchema from "./rules/require-form-schema";
 import noStaticInlineStyle from "./rules/no-static-inline-style";
 import noTemplateLiteralClassname from "./rules/no-template-literal-classname";
 import noUnboundFieldControl from "./rules/no-unbound-field-control";
@@ -15,6 +16,7 @@ export const rules = {
     "lucide-icon-size-prop": lucideIconSizeProp,
     "no-handrolled-form": noHandrolledForm,
     "no-required-prop-with-schema": noRequiredPropWithSchema,
+    "require-form-schema": requireFormSchema,
     "no-static-inline-style": noStaticInlineStyle,
     "no-template-literal-classname": noTemplateLiteralClassname,
     "no-unbound-field-control": noUnboundFieldControl,
