@@ -4,6 +4,8 @@ import lucideIconSizeProp from "./rules/lucide-icon-size-prop";
 import noHandrolledForm from "./rules/no-handrolled-form";
 import noNestedFormHook from "./rules/no-nested-form-hook";
 import noPrefilledRequiredDefault from "./rules/no-prefilled-required-default";
+import noQueryGatedRowFilter from "./rules/no-query-gated-row-filter";
+import noSilentSubmitBail from "./rules/no-silent-submit-bail";
 import noRequiredPropWithSchema from "./rules/no-required-prop-with-schema";
 import requireFormSchema from "./rules/require-form-schema";
 import noStaticInlineStyle from "./rules/no-static-inline-style";
@@ -19,6 +21,8 @@ export const rules = {
     "no-handrolled-form": noHandrolledForm,
     "no-nested-form-hook": noNestedFormHook,
     "no-prefilled-required-default": noPrefilledRequiredDefault,
+    "no-query-gated-row-filter": noQueryGatedRowFilter,
+    "no-silent-submit-bail": noSilentSubmitBail,
     "no-required-prop-with-schema": noRequiredPropWithSchema,
     "require-form-schema": requireFormSchema,
     "no-static-inline-style": noStaticInlineStyle,
