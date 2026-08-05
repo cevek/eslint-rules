@@ -24,7 +24,8 @@
         "build": "tsc",
         "clean": "rm -rf dist",
         "prepare": "npm run build",
-        "test": "vitest run"
+        "test": "vitest run",
+        "prepublishOnly": "npm run clean && npm run build && node scripts/verify-build.mjs"
     },
     "peerDependencies": {
         "eslint": ">=10"
